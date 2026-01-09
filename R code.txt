@@ -1,0 +1,145 @@
+naverwebtoon<-read.csv("naver.csv")
+genre_translation <- list(
+  "일상" = "daily",
+  "코믹" = "comic",
+  "드라마" = "drama",
+  "감성" = "emotional",
+  "힐링" = "healing",
+  "개그" = "gag",
+  "스릴러" = "thriller",
+  "액션" = "action",
+  "로맨스"= "romance",
+  "판타지" = "fantasy",
+  "스포츠" = "sports",
+  "에피소드" = "episode",
+  "옴니버스" = "omnibus",
+  "스토리" = "story",
+  "무협" = "martial arts",
+  "사극" = "historical")
+
+age_translation <- list(
+  "전체연령가" = "all ages",
+  "12세 이용가" = "12+",
+  "15세 이용가" = "15+",
+  "18세 이용가" = "18+")
+translate_genres <- function(g, dictionary) {
+  parts <- unlist(strsplit(g, ","))
+  translated <- sapply(parts, function(x) dictionary[[trimws(x)]] %||% trimws(x))
+  paste(translated, collapse = ", ")}
+naverwebtoon$genre_en <- sapply(naverwebtoon$genre, translate_genres, dictionary = genre_translation)
+head(naverwebtoon[, c("genre", "genre_en")])
+translate_age <- function(age, dictionary) {
+  parts <- unlist(strsplit(age, ","))
+  translated <- sapply(parts, function(x) dictionary[[trimws(x)]] %||% trimws(x))
+  paste(translated, collapse = ", ")}
+naverwebtoon$age_en <- sapply(naverwebtoon$age, translate_age, dictionary = age_translation)
+head(naverwebtoon[, c("age", "age_en")])
+
+install.packages("googleLanguageR")
+library(googleLanguageR)
+gl_auth("electric-rhino-455721-g1-4c75a220cbc0.json")
+
+#test
+gl_translate("기독교가 세상에서 제일 싫었던 사람...", target = "en")
+
+naverwebtoon$description_en <- sapply(naverwebtoon$description, function(text) {
+  tryCatch({
+    gl_translate(text, target = "en")$translatedText
+  }, error = function(e) {
+    NA})})
+
+naverwebtoon$author_en <- sapply(naverwebtoon$author, function(text) {
+  tryCatch({
+    gl_translate(text, target = "en")$translatedText
+  }, error = function(e) {
+    NA})})
+
+naverwebtoon$title_en <- sapply(naverwebtoon$title, function(text) {
+  tryCatch({
+    gl_translate(text, target = "en")$translatedText
+  }, error = function(e) {
+    NA})})
+naverwebtoon <- naverwebtoon[, c("id","title","title_en", "author","author_en", "description", "description_en", "rating","age","age_en", "genre", "genre_en","date","completed","free","link")]
+write.csv(naverwebtoon, "naver_translated.csv", row.names = FALSE)
+
+install.packages("tidytext")
+install.packages("dplyr")
+install.packages("ggplot2")
+
+library(tidytext)
+library(dplyr)
+
+naverwebtoontrans<-read.csv("naver_translated.csv")
+df <- naverwebtoontrans %>% mutate(id = row_number())
+tokens_df <- df %>%
+  select(id, rating, genre, description_en) %>%
+  unnest_tokens(word, description_en)
+data("stop_words")
+tokens_clean <- tokens_df %>%
+  anti_join(stop_words, by = "word")
+top_words_clean <- tokens_clean %>%
+  count(word, sort = TRUE) %>%
+  head(20)
+print(top_words_clean)
+ggplot(top_words_clean, aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "pink") +
+  coord_flip() +
+  labs(title = "Top 20 Words (Stop Words Removed)", x = "Word", y = "Frequency") +
+  theme_minimal()
+
+library(tidyr)
+df_genre_split <- naverwebtoontrans %>%
+  separate_rows(genre_en, sep = ",") %>%
+  mutate(genre_en = trimws(genre_en))
+genre_avg_rating <- df_genre_split %>%
+  group_by(genre_en) %>%
+  summarise(
+    avg_rating = mean(rating, na.rm = TRUE),
+    count = n()
+  ) %>%
+  arrange(desc(avg_rating))
+exclude_genres <- c("omnibus", "story", "episode", "무협/사극","daily")
+genre_avg_rating_filtered <- genre_avg_rating %>%
+  filter(!genre_en %in% exclude_genres)
+ggplot(genre_avg_rating_filtered, aes(x = reorder(genre_en, avg_rating), y = avg_rating)) +
+  geom_col(fill = "skyblue", color = NA) +
+  coord_flip() +
+  labs(title = "Average Rating by Genre", x = "Genre", y = "Avg Rating") +
+  theme_minimal()
+
+df_genre_split <- df %>%
+  separate_rows(genre_en, sep = ",") %>%
+  mutate(genre_en = trimws(genre_en))
+tokens <- df_genre %>%
+  select(id, genre_en, description_en) %>%
+  unnest_tokens(word, description_en)
+sentiment_words <- tokens %>%
+  inner_join(get_sentiments("bing"), by = "word")
+genre_sentiment_counts <- sentiment_words %>%
+  group_by(genre_en, sentiment) %>%
+  summarise(n = n(), .groups = "drop")
+ggplot(genre_sentiment_counts, aes(x = reorder(genre_en, n), y = n, fill = sentiment)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  labs(title = "Sentiment Polarity by Genre", x = "Genre", y = "Word Count") +
+  theme_minimal()
+exclude_genres <- c("story", "episode", "omnibus", "daily")
+filtered_sentiment <- genre_sentiment_counts %>%
+  filter(!genre_en %in% exclude_genres)
+ggplot(filtered_sentiment, aes(x = reorder(genre_en, n), y = n, fill = sentiment)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  labs(title = "Sentiment Polarity by Genre", x = "Genre", y = "Word Count") +
+  theme_minimal()
+
+install.packages("wordcloud")  
+library(wordcloud)
+top20 <- tokens_clean %>%
+  count(word, sort = TRUE) %>%
+  slice_max(order_by = n, n = 20)
+wordcloud(
+  words = top20$word,
+  freq = top20$n,
+  max.words = 20,
+  random.order = FALSE,
+  colors = brewer.pal(8, "Set3"))
