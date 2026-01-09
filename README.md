@@ -1,2 +1,2 @@
 # WEBTOON
-Line Webtoon Data Exploratory Analysis
+Naver Webtoon Data Exploratory Analysis
